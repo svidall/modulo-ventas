@@ -145,7 +145,22 @@ public class VentaService {
         // 6. Call Caja to register cobro request
         String clienteFullName = cliente.getNombre() + " " + cliente.getApellido();
         String concepto = "Venta factura " + saved.getNumeroFactura();
-        cajaClient.enviarSolicitudCobro(saved.getIdVenta(), saved.getIdReserva(), clienteFullName, concepto, saved.getMontoTotal());
+        List<CajaClient.SolicitudCobroMsg.ItemMsg> itemsMsg = saved.getDetalles().stream()
+                .map(det -> new CajaClient.SolicitudCobroMsg.ItemMsg(
+                        det.getIdProducto(),
+                        det.getCantidad(),
+                        det.getPrecioUnitario() != null ? det.getPrecioUnitario().doubleValue() : 0.0
+                ))
+                .collect(Collectors.toList());
+        cajaClient.enviarSolicitudCobro(
+                saved.getIdVenta(),
+                saved.getIdReserva(),
+                saved.getNumeroFactura(),
+                itemsMsg,
+                clienteFullName,
+                concepto,
+                saved.getMontoTotal()
+        );
 
         return mapToDetailResponse(saved);
     }
