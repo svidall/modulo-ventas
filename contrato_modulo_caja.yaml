@@ -1,0 +1,659 @@
+openapi: 3.1.0
+info:
+  title: Módulo Caja API
+  description: |
+    API REST del módulo Caja del sistema distribuido.
+
+    **Flujo general:**
+    - Ventas y Compras envían solicitudes a una cola de mensajes (ActiveMQ)
+    - Un listener lee la cola (por selector) e inserta en SOLICITUD_COBRO o SOLICITUD_PAGO
+    - El front consulta Caja para listar solicitudes pendientes
+    - El operador especifica formas de pago/cobro y confirma
+    - Caja consulta Stock de forma síncrona (solo para cobros)
+    - Caja notifica a Ventas/Compras por cola al finalizar
+  version: 1.0.0
+  contact:
+    name: Módulo Caja
+  license:
+    name: MIT
+
+tags:
+  - name: Catálogos
+    description: Formas de cobro y pago disponibles
+  - name: Cobros
+    description: Gestión de solicitudes de cobro (origen Ventas)
+  - name: Pagos
+    description: Gestión de solicitudes de pago (origen Compras)
+
+paths:
+
+  /formas-cobro:
+    get:
+      tags: [Catálogos]
+      summary: Listar formas de cobro activas
+      description: Retorna el catálogo de formas de cobro para que el front muestre las opciones al operador.
+      operationId: listarFormasCobro
+      responses:
+        '200':
+          description: Lista de formas de cobro
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FormaCobro'
+              example:
+                - id_forma_cobro: 1
+                  descripcion: Efectivo
+                  activo: S
+                - id_forma_cobro: 2
+                  descripcion: Tarjeta de crédito
+                  activo: S
+                - id_forma_cobro: 3
+                  descripcion: Transferencia
+                  activo: S
+
+  /formas-pago:
+    get:
+      tags: [Catálogos]
+      summary: Listar formas de pago activas
+      description: Retorna el catálogo de formas de pago para que el front muestre las opciones al operador.
+      operationId: listarFormasPago
+      responses:
+        '200':
+          description: Lista de formas de pago
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FormaPago'
+              example:
+                - id_forma_pago: 1
+                  descripcion: Transferencia bancaria
+                  activo: S
+                - id_forma_pago: 2
+                  descripcion: Cheque
+                  activo: S
+
+  /cobros:
+    get:
+      tags: [Cobros]
+      summary: Listar solicitudes de cobro
+      operationId: listarCobros
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [PENDIENTE, COBRADO, ANULADO]
+          example: PENDIENTE
+        - name: cliente
+          in: query
+          required: false
+          schema:
+            type: string
+          example: Juan Pérez
+      responses:
+        '200':
+          description: Lista de solicitudes de cobro
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SolicitudCobro'
+
+  /cobros/{id}:
+    get:
+      tags: [Cobros]
+      summary: Obtener solicitud de cobro por ID
+      operationId: obtenerCobro
+      parameters:
+        - $ref: '#/components/parameters/IdSolicitudCobro'
+      responses:
+        '200':
+          description: Solicitud de cobro encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolicitudCobroDetalle'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /cobros/{id}/confirmar:
+    post:
+      tags: [Cobros]
+      summary: Confirmar cobro
+      operationId: confirmarCobro
+      description: |
+        El operador especifica las formas de cobro con sus montos parciales y confirma.
+
+        **Internamente Caja:**
+        1. Valida que la suma de montos parciales == monto total de la solicitud
+        2. Llama a Stock de forma **síncrona** (HTTP) para confirmar la reserva por `id_reserva`
+        3. Si Stock responde OK, inserta en DETALLE_COBRO y actualiza estado a COBRADO
+        4. Publica mensaje en cola de respuesta para notificar a Ventas
+      parameters:
+        - $ref: '#/components/parameters/IdSolicitudCobro'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmarCobroRequest'
+            example:
+              detalles:
+                - id_forma_cobro: 1
+                  monto: 150000.00
+                  observacion: Pago en efectivo
+                - id_forma_cobro: 2
+                  monto: 50000.00
+                  observacion: Tarjeta Visa
+      responses:
+        '200':
+          description: Cobro confirmado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmacionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: La solicitud ya fue procesada o anulada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Error al comunicarse con Stock
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /cobros/{id}/anular:
+    post:
+      tags: [Cobros]
+      summary: Anular solicitud de cobro
+      operationId: anularCobro
+      description: |
+        Anula una solicitud de cobro en estado PENDIENTE.
+        Si tenía reserva en Stock, Caja notifica a Stock para liberar el stock reservado.
+      parameters:
+        - $ref: '#/components/parameters/IdSolicitudCobro'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnularRequest'
+      responses:
+        '200':
+          description: Cobro anulado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmacionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: No se puede anular — estado no es PENDIENTE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /pagos:
+    get:
+      tags: [Pagos]
+      summary: Listar solicitudes de pago
+      operationId: listarPagos
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [PENDIENTE, PAGADO, ANULADO]
+          example: PENDIENTE
+        - name: proveedor
+          in: query
+          required: false
+          schema:
+            type: string
+          example: Proveedor SA
+      responses:
+        '200':
+          description: Lista de solicitudes de pago
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SolicitudPago'
+
+  /pagos/{id}:
+    get:
+      tags: [Pagos]
+      summary: Obtener solicitud de pago por ID
+      operationId: obtenerPago
+      parameters:
+        - $ref: '#/components/parameters/IdSolicitudPago'
+      responses:
+        '200':
+          description: Solicitud de pago encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolicitudPagoDetalle'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /pagos/{id}/confirmar:
+    post:
+      tags: [Pagos]
+      summary: Confirmar pago
+      operationId: confirmarPago
+      description: |
+        El operador especifica las formas de pago con sus montos parciales y confirma.
+
+        **Internamente Caja:**
+        1. Valida que la suma de montos parciales == monto total de la solicitud
+        2. Inserta en DETALLE_PAGO y actualiza estado a PAGADO
+        3. Publica mensaje en cola de respuesta para notificar a Compras
+
+        No hay llamada a Stock — los pagos a proveedores no afectan reservas.
+      parameters:
+        - $ref: '#/components/parameters/IdSolicitudPago'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmarPagoRequest'
+            example:
+              detalles:
+                - id_forma_pago: 1
+                  monto: 500000.00
+                  observacion: Transferencia Banco Nacional
+      responses:
+        '200':
+          description: Pago confirmado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmacionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: La solicitud ya fue procesada o anulada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /pagos/{id}/anular:
+    post:
+      tags: [Pagos]
+      summary: Anular solicitud de pago
+      operationId: anularPago
+      parameters:
+        - $ref: '#/components/parameters/IdSolicitudPago'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnularRequest'
+      responses:
+        '200':
+          description: Pago anulado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmacionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: No se puede anular — estado no es PENDIENTE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /health:
+    get:
+      tags: [Catálogos]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: API funcionando
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+components:
+
+  parameters:
+    IdSolicitudCobro:
+      name: id
+      in: path
+      required: true
+      description: ID de la solicitud de cobro
+      schema:
+        type: integer
+        example: 101
+    IdSolicitudPago:
+      name: id
+      in: path
+      required: true
+      description: ID de la solicitud de pago
+      schema:
+        type: integer
+        example: 201
+
+  responses:
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            codigo: 404
+            mensaje: Solicitud no encontrada
+    BadRequest:
+      description: Datos inválidos en el request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            codigo: 400
+            mensaje: La suma de montos parciales no coincide con el monto total
+
+  schemas:
+
+    FormaCobro:
+      type: object
+      properties:
+        id_forma_cobro:
+          type: integer
+          example: 1
+        descripcion:
+          type: string
+          example: Efectivo
+        activo:
+          type: string
+          enum: [S, N]
+          example: S
+        observacion:
+          type: ["string", "null"]
+          example: null
+
+    FormaPago:
+      type: object
+      properties:
+        id_forma_pago:
+          type: integer
+          example: 1
+        descripcion:
+          type: string
+          example: Transferencia bancaria
+        activo:
+          type: string
+          enum: [S, N]
+          example: S
+        observacion:
+          type: ["string", "null"]
+          example: null
+
+    SolicitudCobro:
+      type: object
+      properties:
+        id_solicitud_cobro:
+          type: integer
+          example: 1
+        canal:
+          type: string
+          enum: [VENTA]
+          example: VENTA
+        channel_reference:
+          type: string
+          description: ID de la venta en el módulo Ventas
+          example: VTA-001
+        id_reserva:
+          type: ["integer", "null"]
+          description: ID de reserva en Stock (solo ventas con stock)
+          example: 101
+        fecha_solicitud:
+          type: string
+          format: date
+          example: "2026-06-01"
+        cliente:
+          type: string
+          example: Juan Pérez
+        concepto:
+          type: string
+          example: Venta factura 001
+        monto:
+          type: number
+          format: double
+          example: 150000.00
+        estado:
+          type: string
+          enum: [PENDIENTE, COBRADO, ANULADO]
+          example: PENDIENTE
+        observacion:
+          type: ["string", "null"]
+          example: null
+
+    SolicitudCobroDetalle:
+      allOf:
+        - $ref: '#/components/schemas/SolicitudCobro'
+        - type: object
+          properties:
+            detalles:
+              type: array
+              items:
+                $ref: '#/components/schemas/DetalleCobro'
+
+    DetalleCobro:
+      type: object
+      properties:
+        id_forma_cobro:
+          type: integer
+          example: 1
+        descripcion_forma:
+          type: ["string", "null"]
+          example: Efectivo
+        monto:
+          type: number
+          format: double
+          example: 150000.00
+        observacion:
+          type: ["string", "null"]
+          example: null
+
+    SolicitudPago:
+      type: object
+      properties:
+        id_solicitud_pago:
+          type: integer
+          example: 1
+        canal:
+          type: string
+          enum: [COMPRA]
+          example: COMPRA
+        channel_reference:
+          type: string
+          description: ID de la compra en el módulo Compras
+          example: CMP-001
+        fecha_solicitud:
+          type: string
+          format: date
+          example: "2026-06-01"
+        proveedor:
+          type: string
+          example: Proveedor SA
+        concepto:
+          type: string
+          example: Compra orden 001
+        monto:
+          type: number
+          format: double
+          example: 500000.00
+        estado:
+          type: string
+          enum: [PENDIENTE, PAGADO, ANULADO]
+          example: PENDIENTE
+        observacion:
+          type: ["string", "null"]
+          example: null
+
+    SolicitudPagoDetalle:
+      allOf:
+        - $ref: '#/components/schemas/SolicitudPago'
+        - type: object
+          properties:
+            detalles:
+              type: array
+              items:
+                $ref: '#/components/schemas/DetallePago'
+
+    DetallePago:
+      type: object
+      properties:
+        id_forma_pago:
+          type: integer
+          example: 1
+        descripcion_forma:
+          type: ["string", "null"]
+          example: Transferencia bancaria
+        monto:
+          type: number
+          format: double
+          example: 500000.00
+        observacion:
+          type: ["string", "null"]
+          example: null
+
+    ConfirmarCobroRequest:
+      type: object
+      required: [detalles]
+      properties:
+        detalles:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [id_forma_cobro, monto]
+            properties:
+              id_forma_cobro:
+                type: integer
+                example: 1
+              monto:
+                type: number
+                format: double
+                example: 150000.00
+              observacion:
+                type: ["string", "null"]
+                example: null
+
+    ConfirmarPagoRequest:
+      type: object
+      required: [detalles]
+      properties:
+        detalles:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [id_forma_pago, monto]
+            properties:
+              id_forma_pago:
+                type: integer
+                example: 1
+              monto:
+                type: number
+                format: double
+                example: 500000.00
+              observacion:
+                type: ["string", "null"]
+                example: null
+
+    AnularRequest:
+      type: object
+      properties:
+        observacion:
+          type: ["string", "null"]
+          example: Cliente desistió de la compra
+
+    ConfirmacionResponse:
+      type: object
+      properties:
+        mensaje:
+          type: string
+          example: Cobro confirmado exitosamente
+        id:
+          type: integer
+          example: 101
+        estado:
+          type: string
+          example: COBRADO
+
+    Error:
+      type: object
+      properties:
+        codigo:
+          type: integer
+          example: 404
+        mensaje:
+          type: string
+          example: Solicitud no encontrada
+
+  examples:
+    MensajeColaVentas:
+      summary: Mensaje que Ventas publica en la cola
+      value:
+        tipo: SOLICITUD_COBRO
+        id_venta: VTA-001
+        id_reserva: 101
+        cliente: Juan Pérez
+        concepto: Venta factura 001
+        monto: 150000.00
+
+    MensajeColaCompras:
+      summary: Mensaje que Compras publica en la cola
+      value:
+        tipo: SOLICITUD_PAGO
+        id_compra: CMP-001
+        proveedor: Proveedor SA
+        concepto: Compra orden 001
+        monto: 500000.00
+
+    MensajeRespuestaCobro:
+      summary: Mensaje que Caja publica al confirmar cobro
+      value:
+        tipo: COBRO_CONFIRMADO
+        id_solicitud_cobro: 10
+        id_venta: VTA-001
+
+    MensajeRespuestaPago:
+      summary: Mensaje que Caja publica al confirmar pago
+      value:
+        tipo: PAGO_CONFIRMADO
+        id_solicitud_pago: 10
+        id_compra: CMP-001

@@ -1,0 +1,1028 @@
+openapi: 3.0.0
+info:
+  title: API de Gestión de Ventas y Clientes
+  description: >
+    Especificación de la API REST para el sistema de gestión comercial.
+    Permite la administración de clientes, el catálogo de productos, 
+    el registro y consulta de ventas, y la parametrización de facturación (Configuración).
+    
+    **Reglas de negocio aplicadas:**
+    - Al crear una venta, el `subtotal` de cada detalle se calcula automáticamente.
+    - El `monto_total` y los subtotales de impuestos (`iva_5`, `iva_10`, `exenta`) se 
+      calculan totalizando los detalles, dependiendo del impuesto configurado en cada producto.
+    - La generación de `nro_timbrado` y `numero_factura` depende de la tabla de Configuración activa.
+    - El estado inicial de una venta suele ser `PENDIENTE` y avanza a `COMPLETADA`, `CANCELADA` o `FALLIDA` mediante acciones.
+  version: 1.3.0
+  contact:
+    name: Equipo de Arquitectura
+servers:
+  - url: https://api.midominio.com
+    description: Servidor de Producción
+  - url: http://localhost:8080
+    description: Servidor de Desarrollo Local
+
+tags:
+  - name: Configuracion
+    description: Parámetros de facturación y empresa
+  - name: Productos
+    description: Catálogo de artículos para la venta
+  - name: Ventas
+    description: Operaciones relacionadas con el registro y consulta de ventas
+  - name: Clientes
+    description: Operaciones relacionadas con la gestión de clientes, direcciones y contactos
+
+paths:
+  /api/configuracion:
+    get:
+      tags: [Configuracion]
+      summary: Obtener configuración activa
+      description: Retorna los parámetros actuales de facturación y datos de la empresa.
+      operationId: getConfiguracionActiva
+      responses:
+        '200':
+          description: Configuración obtenida correctamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfiguracionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+          
+    put:
+      tags: [Configuracion]
+      summary: Actualizar configuración
+      description: Actualiza los parámetros de la empresa y facturación.
+      operationId: updateConfiguracion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfiguracionRequest'
+      responses:
+        '200':
+          description: Configuración actualizada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfiguracionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/productos:
+    get:
+      tags: [Productos]
+      summary: Listar y buscar productos
+      description: Retorna una lista paginada del catálogo de productos. Permite búsqueda parcial por nombre.
+      operationId: listarProductos
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+        - $ref: '#/components/parameters/ProductoNombreFilterParam'
+      responses:
+        '200':
+          description: Página de productos obtenida correctamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductoPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/productos/{id_producto}:
+    parameters:
+      - name: id_producto
+        in: path
+        required: true
+        description: Código autonumerado único del producto.
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+    get:
+      tags: [Productos]
+      summary: Obtener detalle completo de un producto
+      description: Retorna la información de un producto específico, incluyendo su precio y tipo de impuesto.
+      operationId: obtenerProductoPorId
+      responses:
+        '200':
+          description: Detalle del producto obtenido exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductoDetalleResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/ventas:
+    get:
+      tags: [Ventas]
+      summary: Listar ventas
+      description: Retorna una lista paginada de ventas. Permite aplicar filtros opcionales conservando el paginado.
+      operationId: listarVentas
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+        - $ref: '#/components/parameters/VentaFechaDesdeFilterParam'
+        - $ref: '#/components/parameters/VentaFechaHastaFilterParam'
+        - $ref: '#/components/parameters/VentaEstadoFilterParam'
+        - $ref: '#/components/parameters/VentaIdClienteFilterParam'
+      responses:
+        '200':
+          description: Página de ventas obtenida correctamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VentaPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      tags: [Ventas]
+      summary: Crear una nueva venta
+      description: Registra una nueva venta asociando un cliente y los productos.
+      operationId: crearVenta
+      requestBody:
+        description: Datos necesarios para registrar una venta
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VentaCrearRequest'
+      responses:
+        '201':
+          description: Venta creada exitosamente
+          headers:
+            Location:
+              $ref: '#/components/headers/LocationHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VentaDetalleCompletoResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/ventas/{id_venta}:
+    parameters:
+      - name: id_venta
+        in: path
+        required: true
+        description: Código autonumerado único de la venta.
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+    get:
+      tags: [Ventas]
+      summary: Obtener detalle completo de una venta
+      description: Retorna toda la información asociada a una venta específica, incluyendo datos del cliente, impuestos y productos.
+      operationId: obtenerVentaPorId
+      responses:
+        '200':
+          description: Detalle de la venta obtenido exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VentaDetalleCompletoResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/ventas/{id_venta}/confirmar:
+    parameters:
+      - name: id_venta
+        in: path
+        required: true
+        description: Código autonumerado único de la venta.
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+    post:
+      tags: [Ventas]
+      summary: Confirmar una venta
+      description: Transiciona el estado de una venta (ej. de PENDIENTE a COMPLETADA). Emite el número de factura y timbrado si corresponde.
+      operationId: confirmarVenta
+      responses:
+        '200':
+          description: Venta confirmada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VentaDetalleCompletoResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/ventas/{id_venta}/cancelar:
+    parameters:
+      - name: id_venta
+        in: path
+        required: true
+        description: Código autonumerado único de la venta.
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+    post:
+      tags: [Ventas]
+      summary: Cancelar una venta
+      description: Anula la venta y transiciona su estado a CANCELADA.
+      operationId: cancelarVenta
+      responses:
+        '200':
+          description: Venta cancelada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VentaDetalleCompletoResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/clientes:
+    get:
+      tags: [Clientes]
+      summary: Listar clientes
+      description: Retorna una lista paginada de clientes. Permite búsqueda por RUC, CI, nombre o apellido.
+      operationId: listarClientes
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+        - $ref: '#/components/parameters/ClienteRucFilterParam'
+        - $ref: '#/components/parameters/ClienteCiFilterParam'
+        - $ref: '#/components/parameters/ClienteNombreFilterParam'
+        - $ref: '#/components/parameters/ClienteApellidoFilterParam'
+      responses:
+        '200':
+          description: Página de clientes obtenida correctamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      tags: [Clientes]
+      summary: Crear un nuevo cliente
+      description: Registra un cliente junto con sus direcciones y contactos.
+      operationId: crearCliente
+      requestBody:
+        description: Objeto con los datos del cliente, direcciones y contactos
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClienteCrearRequest'
+      responses:
+        '201':
+          description: Cliente creado exitosamente
+          headers:
+            Location:
+              $ref: '#/components/headers/LocationHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClienteDetalleCompletoResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/clientes/{id_cliente}:
+    parameters:
+      - name: id_cliente
+        in: path
+        required: true
+        description: Código autonumerado único del cliente.
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+    get:
+      tags: [Clientes]
+      summary: Obtener detalle completo de un cliente
+      description: Retorna toda la información de un cliente, incluyendo todas sus direcciones y contactos.
+      operationId: obtenerClientePorId
+      responses:
+        '200':
+          description: Detalle del cliente obtenido exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClienteDetalleCompletoResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  headers:
+    LocationHeader:
+      description: URI del recurso creado
+      schema:
+        type: string
+        format: uri-reference
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      description: Número de página basado en cero.
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        default: 0
+
+    SizeParam:
+      name: size
+      in: query
+      description: Cantidad de elementos por página.
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 20
+        
+    ProductoNombreFilterParam:
+      name: nombre
+      in: query
+      description: Filtro por nombre de producto (búsqueda parcial)
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 150
+
+    VentaFechaDesdeFilterParam:
+      name: fecha_desde
+      in: query
+      description: Filtrar ventas emitidas desde esta fecha
+      required: false
+      schema:
+        type: string
+        format: date
+
+    VentaFechaHastaFilterParam:
+      name: fecha_hasta
+      in: query
+      description: Filtrar ventas emitidas hasta esta fecha
+      required: false
+      schema:
+        type: string
+        format: date
+
+    VentaEstadoFilterParam:
+      name: estado
+      in: query
+      description: Filtrar por el estado de la venta
+      required: false
+      schema:
+        type: string
+        enum: [PENDIENTE, COMPLETADA, CANCELADA, FALLIDA]
+
+    VentaIdClienteFilterParam:
+      name: id_cliente
+      in: query
+      description: Filtrar por el ID del cliente
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+
+    ClienteRucFilterParam:
+      name: ruc
+      in: query
+      description: Filtro por número de RUC
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 20
+
+    ClienteCiFilterParam:
+      name: ci
+      in: query
+      description: Filtro por número de Cédula de Identidad
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 20
+
+    ClienteNombreFilterParam:
+      name: nombre
+      in: query
+      description: Filtro por nombre (búsqueda parcial)
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 100
+
+    ClienteApellidoFilterParam:
+      name: apellido
+      in: query
+      description: Filtro por apellido (búsqueda parcial)
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 100
+
+  responses:
+    BadRequest:
+      description: Solicitud inválida
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    Conflict:
+      description: Conflicto de negocio
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    UnprocessableContent:
+      description: La solicitud es sintácticamente correcta, pero no se puede procesar
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ValidationProblemDetails'
+    InternalServerError:
+      description: Error interno del servidor
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+  schemas:
+    # ----------------------------
+    # SCHEMAS DE CONFIGURACION
+    # ----------------------------
+    ConfiguracionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - ruc_empresa
+        - timbrado
+        - fecha_inicio_timbrado
+        - fecha_fin_timbrado
+        - codigo_establecimiento
+        - codigo_punto_expedicion
+      properties:
+        ruc_empresa:
+          type: string
+          maxLength: 20
+        razon_social_empresa:
+          type: string
+          maxLength: 100
+        timbrado:
+          type: string
+          maxLength: 20
+        fecha_inicio_timbrado:
+          type: string
+          format: date
+        fecha_fin_timbrado:
+          type: string
+          format: date
+        codigo_establecimiento:
+          type: string
+          maxLength: 3
+        codigo_punto_expedicion:
+          type: string
+          maxLength: 3
+        activo:
+          type: boolean
+          default: true
+
+    ConfiguracionResponse:
+      allOf:
+        - $ref: '#/components/schemas/ConfiguracionRequest'
+        - type: object
+          properties:
+            id_configuracion:
+              type: integer
+              format: int32
+              readOnly: true
+            numero_secuencial_actual:
+              type: integer
+              format: int32
+              readOnly: true
+              
+    # ----------------------------
+    # SCHEMAS DE PRODUCTOS
+    # ----------------------------
+    ProductoDetalleResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id_producto
+        - nombre
+        - precio_unitario
+        - tipo_impuesto
+        - activo
+      properties:
+        id_producto:
+          type: integer
+          format: int32
+          readOnly: true
+        codigo_interno:
+          type: string
+          maxLength: 50
+        nombre:
+          type: string
+          maxLength: 150
+        descripcion:
+          type: string
+        precio_unitario:
+          type: number
+          format: double
+          description: Precio base del producto para la venta
+        tipo_impuesto:
+          type: string
+          enum: [IVA_5, IVA_10, EXENTA]
+          description: Categoría impositiva aplicable al producto
+        activo:
+          type: boolean
+          default: true
+          
+    ProductoPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - page
+        - size
+        - totalItems
+        - totalPages
+        - hasNext
+        - hasPrevious
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductoDetalleResponse'
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalItems:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+        hasNext:
+          type: boolean
+        hasPrevious:
+          type: boolean
+
+    # ----------------------------
+    # SCHEMAS DE VENTAS
+    # ----------------------------
+    VentaCrearRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id_cliente
+        - condicion_venta
+        - detalles
+      properties:
+        id_cliente:
+          type: integer
+          format: int32
+        condicion_venta:
+          type: boolean
+          default: false
+        detalles:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/VentaCrearDetalleRequest'
+
+    VentaCrearDetalleRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id_producto
+        - cantidad
+        - precio_unitario
+      properties:
+        id_producto:
+          type: integer
+          format: int32
+        cantidad:
+          type: integer
+          format: int32
+          minimum: 1
+        precio_unitario:
+          type: number
+          format: double
+
+    VentaListaResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id_venta
+        - fecha_emision
+        - cliente
+        - monto_total
+        - estado
+      properties:
+        id_venta:
+          type: integer
+          format: int32
+          readOnly: true
+        numero_factura:
+          type: string
+        fecha_emision:
+          type: string
+          format: date-time
+        cliente:
+          type: string
+        condicion_venta:
+          type: boolean
+        monto_total:
+          type: number
+          format: double
+        estado:
+          type: string
+          enum: [PENDIENTE, COMPLETADA, CANCELADA, FALLIDA]
+
+    VentaDetalleCompletoResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        id_venta:
+          type: integer
+          format: int32
+          readOnly: true
+        fecha_emision:
+          type: string
+          format: date-time
+        nro_timbrado:
+          type: string
+        numero_factura:
+          type: string
+        condicion_venta:
+          type: boolean
+        subtotal_iva5:
+          type: number
+          format: double
+        subtotal_iva10:
+          type: number
+          format: double
+        subtotal_exenta:
+          type: number
+          format: double
+        monto_total:
+          type: number
+          format: double
+        estado:
+          type: string
+          enum: [PENDIENTE, COMPLETADA, CANCELADA, FALLIDA]
+        cliente:
+          $ref: '#/components/schemas/ClienteListaResponse'
+        detalles:
+          type: array
+          items:
+            $ref: '#/components/schemas/VentaDetalleLinea'
+
+    VentaDetalleLinea:
+      type: object
+      additionalProperties: false
+      properties:
+        id_detalle:
+          type: integer
+          format: int32
+          readOnly: true
+        id_producto:
+          type: integer
+          format: int32
+        cantidad:
+          type: integer
+          format: int32
+        precio_unitario:
+          type: number
+          format: double
+        iva_5:
+          type: number
+          format: double
+        iva_10:
+          type: number
+          format: double
+        exenta:
+          type: number
+          format: double
+        subtotal:
+          type: number
+          format: double
+
+    VentaPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - page
+        - size
+        - totalItems
+        - totalPages
+        - hasNext
+        - hasPrevious
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/VentaListaResponse'
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalItems:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+        hasNext:
+          type: boolean
+        hasPrevious:
+          type: boolean
+
+    # ----------------------------
+    # SCHEMAS DE CLIENTES
+    # ----------------------------
+    ClienteCrearRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - nombre
+        - apellido
+      properties:
+        ruc:
+          type: string
+          maxLength: 20
+        ci:
+          type: string
+          maxLength: 20
+        nombre:
+          type: string
+          maxLength: 100
+        apellido:
+          type: string
+          maxLength: 100
+        direcciones:
+          type: array
+          items:
+            $ref: '#/components/schemas/DireccionRequest'
+        contactos:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContactoRequest'
+
+    DireccionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        tipo:
+          type: string
+          maxLength: 20
+        calle_principal:
+          type: string
+          maxLength: 100
+        calle_secundaria:
+          type: string
+          maxLength: 100
+        numero_casa:
+          type: string
+          maxLength: 10
+        barrio:
+          type: string
+          maxLength: 50
+        ciudad:
+          type: string
+          maxLength: 50
+        latitud:
+          type: number
+          format: double
+        longitud:
+          type: number
+          format: double
+        referencia:
+          type: string
+
+    ContactoRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - nombre
+      properties:
+        nombre:
+          type: string
+          maxLength: 100
+        cargo:
+          type: string
+          maxLength: 50
+        telefono:
+          type: string
+          maxLength: 20
+        email:
+          type: string
+          format: email
+          maxLength: 100
+        es_principal:
+          type: boolean
+          default: false
+
+    ClienteListaResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id_cliente
+        - nombre
+        - apellido
+        - fecha_registro
+      properties:
+        id_cliente:
+          type: integer
+          format: int32
+          readOnly: true
+        ruc:
+          type: string
+        ci:
+          type: string
+        nombre:
+          type: string
+        apellido:
+          type: string
+        fecha_registro:
+          type: string
+          format: date-time
+          readOnly: true
+
+    ClienteDetalleCompletoResponse:
+      allOf:
+        - $ref: '#/components/schemas/ClienteListaResponse'
+        - type: object
+          additionalProperties: false
+          properties:
+            direcciones:
+              type: array
+              items:
+                allOf:
+                  - type: object
+                    properties:
+                      id_direccion:
+                        type: integer
+                        format: int32
+                        readOnly: true
+                  - $ref: '#/components/schemas/DireccionRequest'
+            contactos:
+              type: array
+              items:
+                allOf:
+                  - type: object
+                    properties:
+                      id_contacto:
+                        type: integer
+                        format: int32
+                        readOnly: true
+                  - $ref: '#/components/schemas/ContactoRequest'
+
+    ClientePage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - page
+        - size
+        - totalItems
+        - totalPages
+        - hasNext
+        - hasPrevious
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClienteListaResponse'
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalItems:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+        hasNext:
+          type: boolean
+        hasPrevious:
+          type: boolean
+
+    # ----------------------------
+    # SCHEMAS GENÉRICOS (PROBLEM DETAILS)
+    # ----------------------------
+    ProblemDetails:
+      type: object
+      additionalProperties: true
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+          minimum: 100
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+
+    ValidationProblemDetails:
+      allOf:
+        - $ref: '#/components/schemas/ProblemDetails'
+        - type: object
+          additionalProperties: true
+          properties:
+            errors:
+              type: array
+              items:
+                $ref: '#/components/schemas/ValidationError'
+
+    ValidationError:
+      type: object
+      additionalProperties: false
+      required:
+        - detail
+        - pointer
+      properties:
+        detail:
+          type: string
+        pointer:
+          type: string
