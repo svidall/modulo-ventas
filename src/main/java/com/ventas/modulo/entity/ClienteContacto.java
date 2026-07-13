@@ -6,12 +6,10 @@ import lombok.Setter;
 
 @Entity
 @Table(name = "cliente_contactos", schema = "public")
-@IdClass(ClienteContactoId.class)
 @Getter
 @Setter
 public class ClienteContacto {
 
-    @Id
     @Column(name = "id_cliente")
     private Integer idCliente;
 

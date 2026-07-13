@@ -131,18 +131,13 @@ public class VentaService {
         // 4. Call Stock to create reservation
         Integer idReserva = stockClient.crearReserva(invoiceNum, stockItems);
         venta.setIdReserva(idReserva);
-
-        // 5. Save Venta in DB first (without details to avoid premature cascade inserts with null PK)
+        // 5. Save Venta parent to obtain ID first, then set ID on details and cascade-save
         Venta saved = ventaRepository.save(venta);
-        for (int i = 0; i < detalles.size(); i++) {
-            VentaDetalle det = detalles.get(i);
+        for (VentaDetalle det : detalles) {
             det.setIdVenta(saved.getIdVenta());
-            det.setIdDetalle(i + 1);
             saved.getDetalles().add(det);
         }
         saved = ventaRepository.save(saved);
-
-        // 6. Call Caja to register cobro request
         String clienteFullName = cliente.getNombre() + " " + cliente.getApellido();
         String concepto = "Venta factura " + saved.getNumeroFactura();
         List<CajaClient.SolicitudCobroMsg.ItemMsg> itemsMsg = saved.getDetalles().stream()

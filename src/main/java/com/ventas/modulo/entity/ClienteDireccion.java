@@ -7,12 +7,10 @@ import java.math.BigDecimal;
 
 @Entity
 @Table(name = "cliente_direcciones", schema = "public")
-@IdClass(ClienteDireccionId.class)
 @Getter
 @Setter
 public class ClienteDireccion {
 
-    @Id
     @Column(name = "id_cliente")
     private Integer idCliente;
 
