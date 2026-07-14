@@ -13,6 +13,7 @@ import java.net.URI;
 import java.time.LocalDate;
 
 @RestController
+@CrossOrigin("*")
 @RequestMapping("/api/ventas")
 public class VentaController {
 

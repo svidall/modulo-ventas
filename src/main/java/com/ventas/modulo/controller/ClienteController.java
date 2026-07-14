@@ -11,6 +11,7 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import java.net.URI;
 
 @RestController
+@CrossOrigin("*")
 @RequestMapping("/api/clientes")
 public class ClienteController {
 
